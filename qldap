@@ -1,57 +1,57 @@
 #!/usr/local/bin/tclsh
 
 #
-# Script pour interroger un annuaire LDAP.
+# Script to query an LDAP directory
 #
-# usage : qldap [-h][-f <fichier>][-m x][-v] <nom>
-#    -h : aide
-#    -f : charge un fichier de configuration différent de ~/.qldaprc
-#    -m : mode "x" (exemple : mode "mutt" pour l'accès à l'annuaire depuis mutt)
-#    -v : mode "verbose"
+# usage : qldap [-h][-f <file>][-m x][-v] <name>
+#    -h : help
+#    -f : use a configuration file different from ~/.qldaprc
+#    -m : "x" mode (example : "mutt" mode for use with the mail program mutt)
+#    -v : be verbose
 #
-# Le fichier de configuration ressemble à
+# Configuration file example
 #	#
-#	# Exemple de ~/.qldaprc
+#	# ~/.qldaprc example
 #	#
 #
-#	# Coordonnées de l'annuaire
+#	# LDAP directory access
 #	url	ldaps://ldap.unistra.fr
 #	base	o=uds
 #
-#	# Authentification : login (binddn) et mot de passe
-#	binddn	uid=moi,o=uds
-#	passwd	pasfounon?
+#	# Authentication : login (binddn) and password
+#	binddn	uid=myself,o=mycomp
+#	passwd	iwillnotgiveyoumypassword
 #
-#	# Filtre de recherche : %1$s est remplacé par la chaîne à chercher
+#	# Lookup filter: %1$s is substitued by the lookup string
 #	filter	(|(sn=*%1$s*)(mail=%1$s*))
 #
-#	# mode normal : nom prenom mail tel
+#	# "normal" mode: name givenname mail department phone
 #	fmt		%sn$-15.15s %givenName$-10.10s %mail$-30.30s %telephoneNumber$-10.10s
 #	sort		sn givenName
 #
-#	# mode mutt : mail <tab> nom prenom <tab> tel
-#	# Attention aux tabulations : on ne peut les représenter par \t
+#	# "mutt" mode: mail <tab> cn <tab> dept phone
+#	# Be careful about tabs: you can't use \t, so use a real tab
 #	fmt.mutt	%mail$s	%sn$s %givenName$s	%telephoneNumber$s
 #
-# Historique
-#   2009/02/01 : pda : fichier de config
-#   2009/02/02 : pda : généralisation à tout type d'annuaire
-#   2009/02/17 : pda : généralisation des modes, et tri
-#   2009/02/18 : pda : mode "verbose"
+# History
+#   2009/02/01 : pda : configuration file
+#   2009/02/02 : pda : generalization for any LDAP directory
+#   2009/02/17 : pda : generalization: modes and sort order
+#   2009/02/18 : pda : verbose
 #
 
-# Nécessite Tcllib (>= 1.10)
+# Needs Tcllib (>= 1.10)
 package require ldapx
 
 #
-# Valeurs par défaut
+# Default values
 #
 
 set conf(url)		{ldap://ldap}
 set conf(base)		{o=org}
 set conf(binddn)	{}
 set conf(passwd)	{}
-# %1s = nom cherché
+# %1s = name to search
 set conf(filter)	{(sn=*%1$s*)}
 
 # modes
@@ -63,47 +63,47 @@ set conf(fmt.mutt)	{%mail$s\t%sn$s %givenName$s\t%telephoneNumber$s}
 set conf(verbose.mutt)	yes
 
 ###############################################################################
-# Lire le fichier de conf, qui doit être au format :
-#	clef valeur
-# et stocker les informations dans le tableau conf(), sous la
-# forme conf(clef)=valeur ou conf(clef.mode)=valeur
+# Read configuration file, where lines should have syntax:
+#	key value
+# and stores informations in the conf() array where
+# conf(key)=value or conf(key.mode)=value
 #
-# Seules les clefs présentes dans le tableau peuvent être modifiées.
+# Only keys already in the array may be modified.
 #
 
-proc lire-conf {_conf fichier} {
+proc read-conf {_conf file} {
     upvar $_conf conf
 
-    if {[file exists $fichier]} then {
-	if {[catch {set fd [open $fichier "r"]} msg] == 0} then {
-	    while {[gets $fd ligne] >= 0} {
-		regsub {#.*} $ligne {} ligne
-		set ligne [string trim $ligne]
-		if {[string length $ligne] > 0} then {
-		    analyser-ligne conf $fichier $ligne
+    if {[file exists $file]} then {
+	if {[catch {set fd [open $file "r"]} msg] == 0} then {
+	    while {[gets $fd line] >= 0} {
+		regsub {#.*} $line {} line
+		set line [string trim $line]
+		if {[string length $line] > 0} then {
+		    parse-line conf $file $line
 		}
 	    }
 	    close $fd
 	} else {
-	    puts stderr "Cannot open '$fichier' : $msg"
+	    puts stderr "Cannot open '$file' : $msg"
 	}
     }
 }
 
-proc analyser-ligne {_conf fichier ligne} {
+proc parse-line {_conf file line} {
     upvar $_conf conf
 
-    if {[regexp {^([a-z]+)(\.\S+)?\s+(.*\S)\s*$} $ligne bidon k m v]} then {
+    if {[regexp {^([a-z]+)(\.\S+)?\s+(.*\S)\s*$} $line bidon k m v]} then {
 	if {[lsearch -exact [array names conf] $k] != -1} then {
 	    if {$v eq ".normal"} then {
 		set v ""
 	    }
 	    set conf($k$m) $v
 	} else {
-	    puts stderr "$fichier: unknown keyword '$k'"
+	    puts stderr "$file: unknown keyword '$k'"
 	}
     } else {
-	puts stderr "$fichier: unrecongnized line '$ligne'"
+	puts stderr "$file: unrecongnized line '$line'"
     }
 }
 
@@ -128,11 +128,11 @@ proc get-conf {_conf kw mode} {
 }
 
 ###############################################################################
-# Connexion à l'annuaire via l'URL (ldap:// ou ldaps://), avec
-# éventuellement un login et un mot de passe
+# LDAP connection (via LDAP url ldap:// or ldaps://) with
+# optional login/password
 #
 
-proc connecter {url binddn passwd} {
+proc connect {url binddn passwd} {
     set fd [::ldapx::ldap create %AUTO%]
     if {[string equal $binddn ""] && [string equal $passwd ""]} then {
 	if {! [$fd connect $url]} then {
@@ -149,25 +149,25 @@ proc connecter {url binddn passwd} {
 }
 
 ###############################################################################
-# Déconnexion de l'annuaire
+# LDAP disconnection
 #
 
-proc deconnecter {fd} {
+proc disconnect {fd} {
     $fd disconnect
     $fd destroy
 }
 
 ###############################################################################
-# Recherche dans l'annuaire
-# fd : accès à l'annuaire ldap (cf ldapx(n))
-# outfd : fichier de sortie
-# _conf : tableau de conf
-# string : chaîne à chercher
-# mode : nom du mode, ou ""
-# verbose : 1/on ou 0/off
+# Directory lookup
+# fd : access to LDAP directory (cf ldapx(n))
+# outfd : output file
+# _conf : configuration array
+# string : lookupup string
+# mode : mode, or "" for default mode
+# verbose : 1/on or 0/off
 #
 
-proc chercher {fd outfd _conf string mode verbose} {
+proc lookup {fd outfd _conf string mode verbose} {
     upvar $_conf conf
 
     if {$verbose} then {
@@ -175,13 +175,13 @@ proc chercher {fd outfd _conf string mode verbose} {
     }
 
     #
-    # Chercher les attributs dans la chaîne de format
-    # et dans les critères de tri
+    # Look for attributes in the format string and in the
+    # sort criteria.
     #
 
     set lattr {}
 
-    # Chercher dans la chaîne de format
+    # Search attributes in format string
 
     set fmt [get-conf conf "fmt" $mode]
     if {$fmt eq ""} then {
@@ -197,15 +197,15 @@ proc chercher {fd outfd _conf string mode verbose} {
 	set p $fin
     }
 
-    # Chercher dans la liste de tri
+    # Search attributes in sort order
 
-    set tri [get-conf conf "sort" $mode]
-    foreach t $tri {
+    set sort [get-conf conf "sort" $mode]
+    foreach t $sort {
 	lappend lattr $t
     }
 
-    # Constituer la liste d'attributs et adapter la chaîne de format
-    # pour utiliser des paramètres positionnels (%1$...)
+    # Make the list of attributes, and adapt format string to
+    # use positionnal parameters (%1$s...)
 
     set lattr [lsort -unique -nocase $lattr]
 
@@ -216,7 +216,7 @@ proc chercher {fd outfd _conf string mode verbose} {
     }
 
     #
-    # Préparer la recherche
+    # Prepare lookup
     #
 
     set e [::ldapx::entry create %AUTO%]
@@ -227,9 +227,9 @@ proc chercher {fd outfd _conf string mode verbose} {
 
     $fd traverse $conf(base) $filtre $lattr $e {
 	#
-	# Construire la commande :
+	# Build command:
 	#    format <fmt> <attr1> ... <attrn>
-	# et l'évaluer
+	# and evaluate it
 	#
 
 	set dispcmd [list "format" $fmt]
@@ -248,12 +248,11 @@ proc chercher {fd outfd _conf string mode verbose} {
 	set affichage [eval $dispcmd]
 
 	#
-	# Constituer la liste des résultats avec les n critères
-	# de tri, puis le texte à afficher
+	# Build result list with n sort criteria, and text to display
 	#
 
 	set l {}
-	foreach t $tri {
+	foreach t $sort {
 	    lappend l [$e get1 $t]
 	}
 	lappend l $affichage
@@ -272,19 +271,19 @@ proc chercher {fd outfd _conf string mode verbose} {
     }
 
     #
-    # Trier la liste obtenue
+    # Sort result
     #
 
     set l {}
     set i 0
-    foreach t $tri {
+    foreach t $sort {
 	lappend $l $i
 	incr i
     }
     set lfound [lsort -index $l -nocase $lfound]
 
     #
-    # Sortir la liste
+    # Output result
     #
 
     foreach l [lsort $lfound] {
@@ -295,13 +294,13 @@ proc chercher {fd outfd _conf string mode verbose} {
 }
 
 ###############################################################################
-# Procédure principale et procédures assimilées
+# Main procedure
 
-set usage {usage: %s [-h][-f <fichier>][-m mode][-v] <nom>
-    -h : affiche ce texte
-    -f : charge un fichier de configuration différent de ~/.qldaprc
-    -m : choisit le mode (ex: normal, mutt)
-    -v : verbose
+set usage {usage: %s [-h][-f <file>][-m x][-v] <name>
+    -h : help (this text)
+    -f : use a configuration file different from ~/.qldaprc
+    -m : "x" mode (example : "mutt" mode for use with the mail program mutt)
+    -v : be verbose
 }
 
 proc usage {argv0} {
@@ -315,7 +314,7 @@ proc main {argv0 argv} {
     global env
 
     #
-    # Valeurs par défaut
+    # Default values
     #
 
     set mode ""
@@ -325,7 +324,7 @@ proc main {argv0 argv} {
     append qldaprc .qldaprc
 
     #
-    # Analyse des arguments
+    # Argument analysis
     #
 
     while {[llength $argv] > 0} {
@@ -362,10 +361,10 @@ proc main {argv0 argv} {
     }
 
     #
-    # Corps du script
+    # Do the work
     #
 
-    lire-conf conf $qldaprc
+    read-conf conf $qldaprc
 
     set url    [get-conf conf "url" $mode]
     set binddn [get-conf conf "binddn" $mode]
@@ -375,9 +374,9 @@ proc main {argv0 argv} {
 	set verbose [get-conf conf "verbose" $mode]
     }
 
-    set fd [connecter $url $binddn $passwd]
-    set code [chercher $fd stdout conf [lindex $argv 0] $mode $verbose]
-    deconnecter $fd
+    set fd [connect $url $binddn $passwd]
+    set code [lookup $fd stdout conf [lindex $argv 0] $mode $verbose]
+    disconnect $fd
 
     return $code
 }

@@ -1,31 +1,32 @@
 #
-# Mon .qldaprc à moi-même que c'est moi qui l'ai écrit
+# Example .qldaprc
 #
 # Historique
-#   2009/02/03 : pda : conception
-#   2009/02/17 : pda : changement de format, ajout du tri
+#   2009/02/03 : pda : design
+#   2009/02/17 : pda : format change
+#   2012/10/10 : pda : english translation
 #
 
-# Coordonnées de l'annuaire
+# Your LDAP directory
 url	ldaps://ldap.unistra.fr
 base	o=uds
 
-# Authentification : login (binddn) et mot de passe
+# Authentication : login (binddn) and password
 binddn	uid=pda,o=uds
-passwd	pasfounon?
+passwd	iwillnotgiveyoumypassword
 
-# Filtre de recherche : %1$s est remplacé par la chaîne à chercher
+# Lookup filter: %1$s is substitued by the lookup string
 filter	(|(sn=*%1$s*)(mail=%1$s*))
 
-# mode normal : nom prenom mail composante tel
+# "normal" mode: name givenname mail department phone
 fmt		%cn$-34.34s %mail$-30.30s %departmentNumber$-3.3s %telephoneNumber$-10.10s
 sort		cn departmentNumber
 
-# mode mutt : mail <tab> nom prenom <tab> composante tel
-# Attention aux tabulations : on ne peut les représenter par \t
+# "mutt" mode: mail <tab> cn <tab> dept phone
+# Be careful about tabs: you can't use \t, so use a real tab
 fmt.mutt	%mail$s	%cn$s	%departmentNumber$-3.3s %telephoneNumber$s
-verbose.mutt	yes			# mutt absorbe la première ligne
+verbose.mutt	yes			# mutt drops the first line
 
-# mode téléphonique : critère de tri distinct
+# "phone" mode: another sort criterion
 fmt.tel		%telephoneNumber$-10.10s %cn$s
 sort.tel	telephoneNumber
