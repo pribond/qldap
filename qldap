@@ -1,0 +1,385 @@
+#!/usr/local/bin/tclsh
+
+#
+# Script pour interroger un annuaire LDAP.
+#
+# usage : qldap [-h][-f <fichier>][-m x][-v] <nom>
+#    -h : aide
+#    -f : charge un fichier de configuration différent de ~/.qldaprc
+#    -m : mode "x" (exemple : mode "mutt" pour l'accès à l'annuaire depuis mutt)
+#    -v : mode "verbose"
+#
+# Le fichier de configuration ressemble à
+#	#
+#	# Exemple de ~/.qldaprc
+#	#
+#
+#	# Coordonnées de l'annuaire
+#	url	ldaps://ldap.unistra.fr
+#	base	o=uds
+#
+#	# Authentification : login (binddn) et mot de passe
+#	binddn	uid=moi,o=uds
+#	passwd	pasfounon?
+#
+#	# Filtre de recherche : %1$s est remplacé par la chaîne à chercher
+#	filter	(|(sn=*%1$s*)(mail=%1$s*))
+#
+#	# mode normal : nom prenom mail tel
+#	fmt		%sn$-15.15s %givenName$-10.10s %mail$-30.30s %telephoneNumber$-10.10s
+#	sort		sn givenName
+#
+#	# mode mutt : mail <tab> nom prenom <tab> tel
+#	# Attention aux tabulations : on ne peut les représenter par \t
+#	fmt.mutt	%mail$s	%sn$s %givenName$s	%telephoneNumber$s
+#
+# Historique
+#   2009/02/01 : pda : fichier de config
+#   2009/02/02 : pda : généralisation à tout type d'annuaire
+#   2009/02/17 : pda : généralisation des modes, et tri
+#   2009/02/18 : pda : mode "verbose"
+#
+
+# Nécessite Tcllib (>= 1.10)
+package require ldapx
+
+#
+# Valeurs par défaut
+#
+
+set conf(url)		{ldap://ldap}
+set conf(base)		{o=org}
+set conf(binddn)	{}
+set conf(passwd)	{}
+# %1s = nom cherché
+set conf(filter)	{(sn=*%1$s*)}
+
+# modes
+set conf(fmt)		{%sn$-15.15s %givenName$-10.10s %mail$-30.30s %telephoneNumber$-10.10s}
+set conf(sort)		{sn givenName}
+set conf(verbose)	no
+
+set conf(fmt.mutt)	{%mail$s\t%sn$s %givenName$s\t%telephoneNumber$s}
+set conf(verbose.mutt)	yes
+
+###############################################################################
+# Lire le fichier de conf, qui doit être au format :
+#	clef valeur
+# et stocker les informations dans le tableau conf(), sous la
+# forme conf(clef)=valeur ou conf(clef.mode)=valeur
+#
+# Seules les clefs présentes dans le tableau peuvent être modifiées.
+#
+
+proc lire-conf {_conf fichier} {
+    upvar $_conf conf
+
+    if {[file exists $fichier]} then {
+	if {[catch {set fd [open $fichier "r"]} msg] == 0} then {
+	    while {[gets $fd ligne] >= 0} {
+		regsub {#.*} $ligne {} ligne
+		set ligne [string trim $ligne]
+		if {[string length $ligne] > 0} then {
+		    analyser-ligne conf $fichier $ligne
+		}
+	    }
+	    close $fd
+	} else {
+	    puts stderr "Cannot open '$fichier' : $msg"
+	}
+    }
+}
+
+proc analyser-ligne {_conf fichier ligne} {
+    upvar $_conf conf
+
+    if {[regexp {^([a-z]+)(\.\S+)?\s+(.*\S)\s*$} $ligne bidon k m v]} then {
+	if {[lsearch -exact [array names conf] $k] != -1} then {
+	    if {$v eq ".normal"} then {
+		set v ""
+	    }
+	    set conf($k$m) $v
+	} else {
+	    puts stderr "$fichier: unknown keyword '$k'"
+	}
+    } else {
+	puts stderr "$fichier: unrecongnized line '$ligne'"
+    }
+}
+
+proc get-conf {_conf kw mode} {
+    upvar $_conf conf
+
+    if {$mode eq "normal" || $mode eq ""} then {
+	set kwlist [list $kw]
+    } else {
+	set kwlist [list "$kw.$mode" "$kw"]
+    }
+
+    set v ""
+    foreach k $kwlist {
+	if {[info exists conf($k)]} then {
+	    set v $conf($k)
+	    break
+	}
+    }
+
+    return $v
+}
+
+###############################################################################
+# Connexion à l'annuaire via l'URL (ldap:// ou ldaps://), avec
+# éventuellement un login et un mot de passe
+#
+
+proc connecter {url binddn passwd} {
+    set fd [::ldapx::ldap create %AUTO%]
+    if {[string equal $binddn ""] && [string equal $passwd ""]} then {
+	if {! [$fd connect $url]} then {
+	    puts stderr "Connection error: [$fd error]"
+	    exit 1
+	}
+    } else {
+	if {! [$fd connect $url $binddn $passwd]} then {
+	    puts stderr "Connection error: [$fd error]"
+	    exit 1
+	}
+    }
+    return $fd
+}
+
+###############################################################################
+# Déconnexion de l'annuaire
+#
+
+proc deconnecter {fd} {
+    $fd disconnect
+    $fd destroy
+}
+
+###############################################################################
+# Recherche dans l'annuaire
+# fd : accès à l'annuaire ldap (cf ldapx(n))
+# outfd : fichier de sortie
+# _conf : tableau de conf
+# string : chaîne à chercher
+# mode : nom du mode, ou ""
+# verbose : 1/on ou 0/off
+#
+
+proc chercher {fd outfd _conf string mode verbose} {
+    upvar $_conf conf
+
+    if {$verbose} then {
+    	puts -nonewline $outfd "Searching database... "
+    }
+
+    #
+    # Chercher les attributs dans la chaîne de format
+    # et dans les critères de tri
+    #
+
+    set lattr {}
+
+    # Chercher dans la chaîne de format
+
+    set fmt [get-conf conf "fmt" $mode]
+    if {$fmt eq ""} then {
+	puts stderr "Invalid mode '$mode'"
+	return 1
+    }
+
+    set f $fmt
+    set p 0
+    while {[regexp -start $p -indices {%([a-zA-Z0-9]+)\$} $f bidon lidx]} {
+	lassign $lidx debut fin
+	lappend lattr [string range $f $debut $fin]
+	set p $fin
+    }
+
+    # Chercher dans la liste de tri
+
+    set tri [get-conf conf "sort" $mode]
+    foreach t $tri {
+	lappend lattr $t
+    }
+
+    # Constituer la liste d'attributs et adapter la chaîne de format
+    # pour utiliser des paramètres positionnels (%1$...)
+
+    set lattr [lsort -unique -nocase $lattr]
+
+    set i 1
+    foreach a $lattr {
+	regsub -all -nocase "%$a\\$" $fmt "%$i\$" fmt
+	incr i
+    }
+
+    #
+    # Préparer la recherche
+    #
+
+    set e [::ldapx::entry create %AUTO%]
+
+    set filtre [format [get-conf conf "filter" $mode] $string]
+
+    set lfound {}
+
+    $fd traverse $conf(base) $filtre $lattr $e {
+	#
+	# Construire la commande :
+	#    format <fmt> <attr1> ... <attrn>
+	# et l'évaluer
+	#
+
+	set dispcmd [list "format" $fmt]
+
+	foreach a $lattr {
+	    set v [$e get1 $a]
+	    if {[string equal $a "mail"] && [string equal $v ""]} then {
+		set v "...no.address.found"
+	    }
+	    if {[string equal $a "telephoneNumber"]} then {
+		regsub -all " " $v "" v
+	    }
+	    lappend dispcmd $v
+	}
+
+	set affichage [eval $dispcmd]
+
+	#
+	# Constituer la liste des résultats avec les n critères
+	# de tri, puis le texte à afficher
+	#
+
+	set l {}
+	foreach t $tri {
+	    lappend l [$e get1 $t]
+	}
+	lappend l $affichage
+	lappend lfound $l
+    }
+
+    set nfound [llength $lfound]
+
+    if {$nfound == 0} then {
+	puts $outfd "no match!"
+	return 1
+    }
+
+    if {$verbose} then {
+	puts $outfd "$nfound entries found"
+    }
+
+    #
+    # Trier la liste obtenue
+    #
+
+    set l {}
+    set i 0
+    foreach t $tri {
+	lappend $l $i
+	incr i
+    }
+    set lfound [lsort -index $l -nocase $lfound]
+
+    #
+    # Sortir la liste
+    #
+
+    foreach l [lsort $lfound] {
+	puts $outfd [lindex $l $i]
+    }
+
+    return 0
+}
+
+###############################################################################
+# Procédure principale et procédures assimilées
+
+set usage {usage: %s [-h][-f <fichier>][-m mode][-v] <nom>
+    -h : affiche ce texte
+    -f : charge un fichier de configuration différent de ~/.qldaprc
+    -m : choisit le mode (ex: normal, mutt)
+    -v : verbose
+}
+
+proc usage {argv0} {
+    global usage
+
+    puts stderr [format $usage $argv0]
+}
+
+proc main {argv0 argv} {
+    global conf
+    global env
+
+    #
+    # Valeurs par défaut
+    #
+
+    set mode ""
+
+    set qldaprc $env(HOME)
+    append qldaprc [file separator]
+    append qldaprc .qldaprc
+
+    #
+    # Analyse des arguments
+    #
+
+    while {[llength $argv] > 0} {
+	switch -glob -- [lindex $argv 0] {
+	    -h {
+		usage $argv0
+		return 0
+	    }
+	    -f {
+		set qldaprc [lindex $argv 1]
+		set argv [lreplace $argv 0 1]
+	    }
+	    -m {
+		set mode [lindex $argv 1]
+		set argv [lreplace $argv 0 1]
+	    }
+	    -v {
+		set verbose 1
+		set argv [lreplace $argv 0 0]
+	    }
+	    -* {
+		usage $argv0
+		return 1
+	    }
+	    default {
+		break
+	    }
+	}
+    }
+
+    if {[llength $argv] != 1} then {
+	usage $argv0
+	return 1
+    }
+
+    #
+    # Corps du script
+    #
+
+    lire-conf conf $qldaprc
+
+    set url    [get-conf conf "url" $mode]
+    set binddn [get-conf conf "binddn" $mode]
+    set passwd [get-conf conf "passwd" $mode]
+
+    if {! [info exists verbose]} then {
+	set verbose [get-conf conf "verbose" $mode]
+    }
+
+    set fd [connecter $url $binddn $passwd]
+    set code [chercher $fd stdout conf [lindex $argv 0] $mode $verbose]
+    deconnecter $fd
+
+    return $code
+}
+
+exit [main $argv0 $argv]
