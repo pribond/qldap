@@ -82,6 +82,7 @@ Valid keys are:
 	<td> sort criterion</td></tr>
    <tr><td> verbose</td>
 	<td> specify "yes" qldap must output a first line giving output details</td></tr>
+</table>
 
 You can specify different formats for output lines or sort criteria.
 These formats are used with qldap "-m" option. For example:
