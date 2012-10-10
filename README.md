@@ -16,11 +16,11 @@ file. You may specify multiple output formats.
 Standalone use
 --------------
 
-Example:
+Example (real mail address manually obfuscated):
 
 	$ qldap david
 	... (many lines)
-	DAVID Pierre (MAI)                 pda@unistra.fr                 MAI 0368854650
+	DAVID Pierre (MAI)                 pda /at/ unistra.fr                 MAI 0368854650
 	... (many lines)
 
 You can also use the specialized "phone" format if you have defined
@@ -95,6 +95,12 @@ These formats are used with qldap "-m" option. For example:
 
 The "fmt" and "sort" lines specify a default mode, and the "fmt.phone"
 and "sort.phone" specify a new "phone" mode.
+
+Author
+------
+
+Pierre DAVID (pdagog @ a very famous google mail service)
+
 
 License
 -------
