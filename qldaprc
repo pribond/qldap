@@ -28,5 +28,5 @@ fmt.mutt	%mail$s	%cn$s	%departmentNumber$-3.3s %telephoneNumber$s
 verbose.mutt	yes			# mutt drops the first line
 
 # "phone" mode: another sort criterion
-fmt.tel		%telephoneNumber$-10.10s %cn$s
-sort.tel	telephoneNumber
+fmt.phone	%telephoneNumber$-10.10s %cn$s
+sort.phone	telephoneNumber
