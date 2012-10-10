@@ -17,6 +17,7 @@ Standalone use
 --------------
 
 Example:
+
 	$ qldap david
 	... (many lines)
 	DAVID Pierre (MAI)                 pda@unistra.fr                 MAI 0368854650
@@ -26,6 +27,7 @@ You can also use the specialized "phone" format if you have defined
 it in your $HOME/.qldaprc configuration file:
 
 Example:
+
 	$ qldap -m phone david
 	... (many lines)
 	0368854650 DAVID Pierre (MAI)
@@ -61,16 +63,25 @@ Each configuration file line in your $HOME/.qldaprc has the syntax:
 
 	key[.mode]	value
 
-Key may be:
+Valid keys are:
 
-* url: URL of your LDAP directory. This URL must be ldap:// or ldaps://
-* base: base DN of your LDAP directory
-* binddn (optional): needed if your LDAP directory needs authentication
-* passwd (optional): needed if your LDAP directory needs authentication
-* filter: LDAP search filter
-* fmt: format of output lines
-* sort: sort criterion
-* verbose: specify "yes" qldap must output a first line giving output details
+<table>
+   <tr><td> url</td>
+	<td> URL of your LDAP directory. This URL must be ldap:// or ldaps://</td></tr>
+   <tr><td> base</td>
+	<td> base DN of your LDAP directory</td></tr>
+   <tr><td> binddn (optional)</td>
+	<td> needed if your LDAP directory needs authentication</td></tr>
+   <tr><td> passwd (optional)</td>
+	<td> needed if your LDAP directory needs authentication</td></tr>
+   <tr><td> filter</td>
+	<td> LDAP search filter</td></tr>
+   <tr><td> fmt</td>
+	<td> format of output lines</td></tr>
+   <tr><td> sort</td>
+	<td> sort criterion</td></tr>
+   <tr><td> verbose</td>
+	<td> specify "yes" qldap must output a first line giving output details</td></tr>
 
 You can specify different formats for output lines or sort criteria.
 These formats are used with qldap "-m" option. For example:
